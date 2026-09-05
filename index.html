@@ -73,6 +73,7 @@
                   <th class="num">GF</th>
                   <th class="num">GA</th>
                   <th class="num">GD</th>
+                  <th class="num">Ded</th>
                   <th class="num">Pts</th>
                 </tr>
               </thead>
@@ -129,6 +130,7 @@
                   <th class="num">GF</th>
                   <th class="num">GA</th>
                   <th class="num">GD</th>
+                  <th class="num">Ded</th>
                   <th class="num">Pts</th>
                 </tr>
               </thead>
@@ -171,6 +173,32 @@
         <div class="msg" id="entryMsg"></div>
       </div>
 
+      <!-- POINT DEDUCTIONS -->
+      <div class="entry" id="deductEntry" style="display: none">
+        <h2>Deduct points</h2>
+        <p class="hint">
+          Type the team, then the points to deduct, then an optional reason —
+          e.g. <b>Omega 3 no-show</b>.
+        </p>
+        <div class="entry-row">
+          <input
+            type="text"
+            id="deductInput"
+            placeholder="e.g. Omega 3 no-show"
+          />
+          <button class="primary" id="deductBtn">Apply deduction</button>
+        </div>
+        <div class="msg" id="deductMsg"></div>
+      </div>
+
+      <!-- DEDUCTIONS LOG -->
+      <div class="log" id="deductLogWrap">
+        <h2>Deductions</h2>
+        <div class="log-list" id="deductLogList">
+          <div class="empty-log">No deductions yet.</div>
+        </div>
+      </div>
+
       <!-- MATCH LOG -->
       <div class="log">
         <h2>Results</h2>
@@ -201,6 +229,7 @@
       firebase.initializeApp(firebaseConfig);
       const db = firebase.firestore();
       const matchesDocRef = db.collection("gof").doc("matches");
+      const deductionsDocRef = db.collection("gof").doc("deductions");
     </script>
 
     <script>
@@ -244,8 +273,10 @@
 
       const GROUPS = { A: GROUP_A, B: GROUP_B };
       let matches = [];
+      let deductions = [];
       let unlocked = false;
       let editingId = null;
+      let editingDeductionId = null;
 
       function findTeam(name) {
         const clean = name.trim().toLowerCase();
@@ -293,6 +324,28 @@
         };
       }
 
+      function parseDeduction(raw) {
+        const m = raw.trim().match(/^(.+?)\s+(\d+)(?:\s+(.*))?$/);
+        if (!m)
+          return {
+            error:
+              "Couldn't read that — use the format: TeamName 3 optional reason",
+          };
+        const [, rawTeam, pts, reason] = m;
+        const t = findTeam(rawTeam);
+        if (!t)
+          return { error: `"${rawTeam.trim()}" isn't a team in either group.` };
+        const points = parseInt(pts, 10);
+        if (points <= 0)
+          return { error: "Deduction must be a positive number of points." };
+        return {
+          group: t.group,
+          team: t.team,
+          points,
+          reason: reason ? reason.trim() : "",
+        };
+      }
+
       function computeStandings(group) {
         const teams = GROUPS[group];
         const stats = {};
@@ -337,6 +390,14 @@
               a.pts += 1;
             }
           });
+        // Apply point deductions on top of match points
+        Object.values(stats).forEach((s) => {
+          s.ded = deductions
+            .filter((d) => d.group === group && d.team === s.team)
+            .reduce((sum, d) => sum + d.points, 0);
+          s.pts = s.pts - s.ded;
+        });
+
         return Object.values(stats).sort((x, y) => {
           if (y.pts !== x.pts) return y.pts - x.pts;
           const gdX = x.gf - x.ga,
@@ -396,6 +457,7 @@
           <td class="num">${r.gf}</td>
           <td class="num">${r.ga}</td>
           <td class="num ${gdClass(gd)}">${gd > 0 ? "+" + gd : gd}</td>
+          <td class="num ${r.ded > 0 ? "gd-neg" : "gd-zero"}">${r.ded > 0 ? "-" + r.ded : "0"}</td>
           <td class="num pts">${r.pts}</td>
         </tr>
       `;
@@ -476,9 +538,80 @@
         }
       }
 
+      function renderDeductLog() {
+        const list = document.getElementById("deductLogList");
+        if (deductions.length === 0) {
+          list.innerHTML = `<div class="empty-log">No deductions yet.</div>`;
+          return;
+        }
+        const sorted = [...deductions].sort((a, b) => b.ts - a.ts);
+
+        list.innerHTML = sorted
+          .map((d) => {
+            const isEditing = unlocked && editingDeductionId === d.id;
+
+            const pointsOrEdit = isEditing
+              ? `<div class="edit-score-group">
+           <input type="text" inputmode="numeric" class="edit-score-input" id="edit-ded-${d.id}" value="${d.points}">
+         </div>`
+              : `<span class="log-score">-${d.points}</span>`;
+
+            const actions = !unlocked
+              ? ""
+              : isEditing
+                ? `<div class="edit-actions">
+           <button class="ghost" data-ded-save="${d.id}">Save</button>
+           <button class="ghost" data-ded-cancel="${d.id}">Cancel</button>
+         </div>`
+                : `<div class="edit-actions">
+           <button class="ghost edit-btn" data-ded-edit="${d.id}">Edit</button>
+           <button class="ghost" data-ded-remove="${d.id}">Remove</button>
+         </div>`;
+
+            return `
+      <div class="log-item">
+        <div class="log-fixture">
+          <span class="log-group-tag">GRP ${d.group}</span>
+          <span>${d.team}</span>
+          ${pointsOrEdit}
+          ${d.reason ? `<span class="manager-name">${d.reason}</span>` : ""}
+        </div>
+        <div class="log-meta">${actions}</div>
+      </div>
+    `;
+          })
+          .join("");
+
+        if (unlocked) {
+          list.querySelectorAll("[data-ded-remove]").forEach((btn) => {
+            btn.addEventListener("click", () =>
+              removeDeduction(btn.getAttribute("data-ded-remove")),
+            );
+          });
+          list.querySelectorAll("[data-ded-edit]").forEach((btn) => {
+            btn.addEventListener("click", () => {
+              editingDeductionId = btn.getAttribute("data-ded-edit");
+              renderDeductLog();
+            });
+          });
+          list.querySelectorAll("[data-ded-cancel]").forEach((btn) => {
+            btn.addEventListener("click", () => {
+              editingDeductionId = null;
+              renderDeductLog();
+            });
+          });
+          list.querySelectorAll("[data-ded-save]").forEach((btn) => {
+            btn.addEventListener("click", () =>
+              saveEditedDeduction(btn.getAttribute("data-ded-save")),
+            );
+          });
+        }
+      }
+
       function renderAll() {
         renderTables();
         renderLog();
+        renderDeductLog();
       }
 
       function loadMatches() {
@@ -498,6 +631,35 @@
         );
       }
 
+      function loadDeductions() {
+        deductionsDocRef.onSnapshot(
+          (snap) => {
+            deductions =
+              snap.exists && snap.data().list ? snap.data().list : [];
+            renderAll();
+          },
+          (err) => {
+            console.error(err);
+            showMsg(
+              "Couldn't connect to the database — check the Firebase config.",
+              "err",
+            );
+          },
+        );
+      }
+
+      async function saveDeductions() {
+        try {
+          await deductionsDocRef.set({ list: deductions });
+        } catch (e) {
+          console.error(e);
+          showMsg(
+            "Couldn't save that. Check your connection and try again.",
+            "err",
+          );
+        }
+      }
+
       async function saveMatches() {
         try {
           await matchesDocRef.set({ list: matches });
@@ -512,6 +674,13 @@
 
       function showMsg(text, kind) {
         const el = document.getElementById("entryMsg");
+        el.textContent = text;
+        el.className = "msg show " + kind;
+        setTimeout(() => el.classList.remove("show"), 4000);
+      }
+
+      function showDeductMsg(text, kind) {
+        const el = document.getElementById("deductMsg");
         el.textContent = text;
         el.className = "msg show " + kind;
         setTimeout(() => el.classList.remove("show"), 4000);
@@ -548,6 +717,30 @@
         renderAll();
       }
 
+      async function removeDeduction(id) {
+        deductions = deductions.filter((d) => d.id !== id);
+        await saveDeductions();
+        renderAll();
+      }
+
+      async function saveEditedDeduction(id) {
+        const input = document.getElementById(`edit-ded-${id}`);
+        const newPoints = parseInt(input.value, 10);
+
+        if (Number.isNaN(newPoints) || newPoints <= 0) {
+          showDeductMsg("Deduction must be a positive whole number.", "err");
+          return;
+        }
+
+        deductions = deductions.map((d) =>
+          d.id === id ? { ...d, points: newPoints } : d,
+        );
+        editingDeductionId = null;
+        await saveDeductions();
+        showDeductMsg("Deduction updated.", "ok");
+        renderAll();
+      }
+
       document
         .getElementById("unlockBtn")
         .addEventListener("click", async () => {
@@ -562,7 +755,9 @@
             document.getElementById("lockRow").style.display = "none";
             document.getElementById("entryRow").style.display = "flex";
             document.getElementById("unlockedTag").classList.add("show");
+            document.getElementById("deductEntry").style.display = "block";
             renderLog();
+            renderDeductLog();
           } else {
             showMsg("Wrong password.", "err");
           }
@@ -606,6 +801,39 @@
         if (e.key === "Enter") document.getElementById("submitBtn").click();
       });
 
+      document
+        .getElementById("deductBtn")
+        .addEventListener("click", async () => {
+          const input = document.getElementById("deductInput");
+          const parsed = parseDeduction(input.value);
+          if (parsed.error) {
+            showDeductMsg(parsed.error, "err");
+            return;
+          }
+          deductions.push({
+            id:
+              Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+            group: parsed.group,
+            team: parsed.team,
+            points: parsed.points,
+            reason: parsed.reason,
+            ts: Date.now(),
+          });
+          await saveDeductions();
+          showDeductMsg(
+            `Deducted ${parsed.points} pt${parsed.points === 1 ? "" : "s"} from ${parsed.team}${parsed.reason ? " (" + parsed.reason + ")" : ""}`,
+            "ok",
+          );
+          input.value = "";
+          renderAll();
+        });
+
+      document
+        .getElementById("deductInput")
+        .addEventListener("keydown", (e) => {
+          if (e.key === "Enter") document.getElementById("deductBtn").click();
+        });
+
       document.querySelectorAll(".switcher button").forEach((btn) => {
         btn.addEventListener("click", () => {
           document
@@ -623,6 +851,7 @@
 
       renderSquads();
       loadMatches();
+      loadDeductions();
     </script>
   </body>
 </html>
