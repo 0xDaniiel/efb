@@ -48,7 +48,18 @@
           <div class="panel">
             <div class="panel-head">
               <h2>Table</h2>
-              <!-- <span>P · W · D · L · GF · GA · GD · PTS</span> -->
+            </div>
+            <div class="zone-legend">
+              <span class="zone-legend-item"
+                ><span class="zone-dot zone-qualify"></span>Top 4 qualify</span
+              >
+              <span class="zone-legend-item"
+                ><span class="zone-dot zone-playoff"></span>5–12 playoffs</span
+              >
+              <span class="zone-legend-item"
+                ><span class="zone-dot zone-eliminated"></span>13–16
+                eliminated</span
+              >
             </div>
             <table>
               <thead>
@@ -93,7 +104,18 @@
           <div class="panel">
             <div class="panel-head">
               <h2>Table</h2>
-              <!-- <span>P · W · D · L · GF · GA · GD · PTS</span> -->
+            </div>
+            <div class="zone-legend">
+              <span class="zone-legend-item"
+                ><span class="zone-dot zone-qualify"></span>Top 4 qualify</span
+              >
+              <span class="zone-legend-item"
+                ><span class="zone-dot zone-playoff"></span>5–12 playoffs</span
+              >
+              <span class="zone-legend-item"
+                ><span class="zone-dot zone-eliminated"></span>13–16
+                eliminated</span
+              >
             </div>
             <table>
               <thead>
@@ -348,6 +370,13 @@
         return gd > 0 ? "gd-pos" : gd < 0 ? "gd-neg" : "gd-zero";
       }
 
+      // Rank-based qualification zone: 1-4 qualify, 5-12 playoffs, 13-16 eliminated
+      function zoneClass(rank) {
+        if (rank <= 4) return "zone-qualify";
+        if (rank <= 12) return "zone-playoff";
+        return "zone-eliminated";
+      }
+
       function renderTables() {
         ["A", "B"].forEach((g) => {
           const rows = computeStandings(g);
@@ -355,9 +384,10 @@
           body.innerHTML = rows
             .map((r, i) => {
               const gd = r.gf - r.ga;
+              const rank = i + 1;
               return `
-        <tr>
-          <td class="pos">${i + 1}</td>
+        <tr class="${zoneClass(rank)}">
+          <td class="pos">${rank}</td>
           <td class="team-cell"><span class="team-name">${r.team}</span><span class="manager-name">${r.manager}</span></td>
           <td class="num">${r.played}</td>
           <td class="num">${r.won}</td>
